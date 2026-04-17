@@ -1,0 +1,49 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go build artifacts
+/dist/
+/bin/
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependency vendor
+vendor/
+
+# Environment & secrets
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Profiling
+*.prof
+*.pprof
+
+# Docs
+.venv/
+site/
