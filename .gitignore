@@ -47,3 +47,4 @@ coverage.html
 # Docs
 .venv/
 site/
+.cache/
