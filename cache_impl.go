@@ -32,6 +32,10 @@ func (c *cache[T]) Delete(ctx context.Context, key string) error {
 	return c.store.Delete(ctx, key)
 }
 
+func (c *cache[T]) Clear(ctx context.Context) error {
+	return c.store.Clear(ctx)
+}
+
 func (c *cache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, error) {
 	raw, err := c.store.GetMany(ctx, keys)
 	if err != nil {

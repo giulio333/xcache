@@ -22,6 +22,7 @@ type Cache[T any] interface {
 	Get(ctx context.Context, key string) (T, error)
 	Set(ctx context.Context, key string, value T, opts ...Option) error
 	Delete(ctx context.Context, key string) error
+	Clear(ctx context.Context) error
 	GetOrLoad(ctx context.Context, key string, loader func(ctx context.Context) (T, error), opts ...Option) (T, error)
 	GetMany(ctx context.Context, keys []string) (map[string]T, error)
 	DeleteMany(ctx context.Context, keys []string) error
