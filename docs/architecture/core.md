@@ -20,12 +20,33 @@ type Store interface {
 }
 ```
 
-| Metodo | Note |
-|---|---|
-| `Get` | Ritorna `ErrNotFound` se la chiave manca o è scaduta |
-| `GetMany` | Le chiavi mancanti vengono omesse dalla mappa risultante — nessun errore |
-| `Set` | Accetta `Option` (TTL, tags) |
-| `Close` | Obbligatorio: ferma goroutine background, chiude connessioni |
+### `Get`
+
+Ritorna il valore associato alla chiave. Se la chiave non esiste o è scaduta, ritorna `ErrNotFound`.
+
+### `GetMany`
+
+Ritorna una mappa con i valori trovati. Le chiavi mancanti o scadute vengono omesse — nessun errore.
+
+### `Set`
+
+Scrive un valore. Accetta `Option` per TTL e tag.
+
+### `Delete`
+
+Rimuove una chiave. Non ritorna errore se la chiave non esiste.
+
+### `DeleteMany`
+
+Rimuove più chiavi in una sola chiamata.
+
+### `Clear`
+
+Rimuove tutte le chiavi dallo store.
+
+### `Close`
+
+Obbligatorio: ferma goroutine background e chiude connessioni. Da chiamare sempre con `defer`.
 
 ---
 
@@ -40,8 +61,61 @@ type Cache[T any] interface {
     Set(ctx context.Context, key string, value T, opts ...Option) error
     Delete(ctx context.Context, key string) error
     DeleteMany(ctx context.Context, keys []string) error
+    Clear(ctx context.Context) error
     GetOrLoad(ctx context.Context, key string, loader func(context.Context) (T, error), opts ...Option) (T, error)
 }
+```
+
+### `Get`
+
+Ritorna il valore tipizzato associato alla chiave. Se la chiave non esiste o è scaduta, ritorna `ErrNotFound`.
+
+```go
+user, err := cache.Get(ctx, "user:1")
+if errors.Is(err, xcache.ErrNotFound) {
+    // chiave assente o scaduta
+}
+```
+
+### `GetMany`
+
+Ritorna una mappa `map[string]T` con i valori trovati. Le chiavi mancanti o scadute vengono omesse.
+
+```go
+users, err := cache.GetMany(ctx, []string{"user:1", "user:2", "user:3"})
+// users contiene solo le chiavi presenti in cache
+```
+
+### `Set`
+
+Scrive un valore tipizzato. Accetta `Option` per TTL e tag.
+
+```go
+cache.Set(ctx, "user:1", user, xcache.WithTTL(5*time.Minute))
+```
+
+### `Delete`
+
+Rimuove una chiave. Non ritorna errore se la chiave non esiste.
+
+```go
+cache.Delete(ctx, "user:1")
+```
+
+### `DeleteMany`
+
+Rimuove più chiavi in una sola chiamata.
+
+```go
+cache.DeleteMany(ctx, []string{"user:1", "user:2"})
+```
+
+### `Clear`
+
+Rimuove tutte le chiavi dalla cache.
+
+```go
+cache.Clear(ctx)
 ```
 
 ### `GetOrLoad`
@@ -110,11 +184,21 @@ func WithTTL(d time.Duration) Option
 func WithTags(tags ...string) Option
 ```
 
-| Option | Comportamento |
-|---|---|
-| `WithTTL(0)` | Nessuna scadenza (default) |
-| `WithTTL(5*time.Minute)` | Chiave scade dopo 5 minuti |
-| `WithTags("users", "admin")` | Associa tag per invalidazione di gruppo |
+### `WithTTL`
+
+Imposta la scadenza della chiave. `WithTTL(0)` equivale a nessuna scadenza (default).
+
+```go
+xcache.WithTTL(5 * time.Minute)
+```
+
+### `WithTags`
+
+Associa uno o più tag alla chiave per invalidazione di gruppo.
+
+```go
+xcache.WithTags("users", "admin")
+```
 
 ---
 

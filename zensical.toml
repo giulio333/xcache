@@ -12,10 +12,12 @@ nav = [
   {"Architettura" = [
     "architecture/overview.md",
     "architecture/core.md",
+    "architecture/memory-store.md",
     "architecture/managers.md"
   ]},
   {"Guide" = [
     "guides/getting-started.md",
+    "guides/chain-cache.md",
     "guides/adding-a-sid.md"
   ]}
 ]

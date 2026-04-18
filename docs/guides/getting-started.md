@@ -71,19 +71,11 @@ users, err := cache.GetMany(ctx, []string{"user:1", "user:2", "user:3"})
 cache.DeleteMany(ctx, []string{"user:1", "user:2"})
 ```
 
-## Invalidazione per tag
+## Svuotare la cache
 
 ```go title="main.go"
-// Scrittura con tag
-cache.Set(ctx, "user:1", user1, xcache.WithTags("users"))
-cache.Set(ctx, "user:2", user2, xcache.WithTags("users"))
-
-// Cancellazione di tutte le chiavi con tag "users"
-store.DeleteMany(ctx, store.KeysByTag("users")) // coming soon
+cache.Clear(ctx)
 ```
-
-!!! note "Tag e invalidazione"
-    I tag vengono tracciati dal `MemoryStore` internamente. L'API di invalidazione per tag è pianificata nella prossima release.
 
 ---
 
