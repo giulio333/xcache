@@ -2,6 +2,7 @@ package xcache_test
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -151,4 +152,49 @@ func TestGetOrLoad_Singleflight(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatalf("loader called %d times, expected 1", calls.Load())
 	}
+}
+func BenchmarkSet(b *testing.B) {
+	c := NewCache()
+	ctx := context.Background()
+	u := User{ID: 1, Name: "Alice"}
+	b.ResetTimer()
+	var i atomic.Int64
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = c.Set(ctx, strconv.FormatInt(i.Add(1), 10), u)
+		}
+	})
+}
+
+func BenchmarkGet_Hit(b *testing.B) {
+	c := NewCache()
+	ctx := context.Background()
+	const keys = 1024
+	for i := range keys {
+		_ = c.Set(ctx, strconv.Itoa(i), User{ID: i})
+	}
+	var i atomic.Int64
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, _ = c.Get(ctx, strconv.FormatInt(i.Add(1)%keys, 10))
+		}
+	})
+}
+
+func BenchmarkGetOrLoad_Hit(b *testing.B) {
+	c := NewCache()
+	ctx := context.Background()
+	const keys = 1024
+	for i := range keys {
+		_ = c.Set(ctx, strconv.Itoa(i), User{ID: i})
+	}
+	loader := func(ctx context.Context) (User, error) { return User{ID: 1}, nil }
+	var i atomic.Int64
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, _ = c.GetOrLoad(ctx, strconv.FormatInt(i.Add(1)%keys, 10), loader)
+		}
+	})
 }

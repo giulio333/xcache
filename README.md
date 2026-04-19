@@ -28,6 +28,25 @@ user, err := userCache.GetOrLoad(ctx, "user:123", func() (User, error) {
 - **Singleflight** — prevents cache stampede on `GetOrLoad`
 - **Observability** — Prometheus decorator
 
+## Testing
+
+```bash
+# Unit tests (verbose)
+go test -v ./...
+
+# With race detector
+go test -v -race ./...
+
+# Benchmarks (all cores: 1, 2, 4, 8)
+# Linux / macOS
+go test -bench=. -benchmem -cpu=1,2,4,8 ./...
+# Windows (PowerShell)
+go test --% -bench=. -benchmem -cpu=1,2,4,8 ./...
+
+# Specific package
+go test -v ./store/memory/...
+```
+
 ## Requirements
 
 Go 1.21+
