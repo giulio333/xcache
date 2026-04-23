@@ -1,52 +1,6 @@
 # API pubblica
 
-Documentazione delle interfacce e funzioni esposte al codice utente.
-
----
-
-## Interfaccia `Store`
-
-Contratto che ogni backend deve implementare. Lavora con `any` — la type-safety è responsabilità di `Cache[T]`.
-
-```go
-type Store interface {
-    Get(ctx context.Context, key string) (any, error)
-    GetMany(ctx context.Context, keys []string) (map[string]any, error)
-    Set(ctx context.Context, key string, value any, opts ...Option) error
-    Delete(ctx context.Context, key string) error
-    DeleteMany(ctx context.Context, keys []string) error
-    Clear(ctx context.Context) error
-    Close() error
-}
-```
-
-### `Get`
-
-Ritorna il valore associato alla chiave. Se la chiave non esiste o è scaduta, ritorna `ErrNotFound`.
-
-### `GetMany`
-
-Ritorna una mappa con i valori trovati. Le chiavi mancanti o scadute vengono omesse — nessun errore.
-
-### `Set`
-
-Scrive un valore. Accetta `Option` per TTL e tag.
-
-### `Delete`
-
-Rimuove una chiave. Non ritorna errore se la chiave non esiste.
-
-### `DeleteMany`
-
-Rimuove più chiavi in una sola chiamata.
-
-### `Clear`
-
-Rimuove tutte le chiavi dallo store.
-
-### `Close`
-
-Obbligatorio: ferma goroutine background e chiude connessioni. Da chiamare sempre con `defer`.
+Documentazione delle interfacce e funzioni esposte all'utente finale della libreria.
 
 ---
 

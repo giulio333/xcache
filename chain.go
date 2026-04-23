@@ -16,26 +16,27 @@ func NewChain(stores ...Store) *ChainStore {
 	return &ChainStore{stores: stores}
 }
 
-func (c *ChainStore) Get(ctx context.Context, key string) (any, error) {
+func (c *ChainStore) Get(ctx context.Context, key string) (Entry, error) {
 	for i, s := range c.stores {
-		val, err := s.Get(ctx, key)
+		entry, err := s.Get(ctx, key)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				continue
 			}
-			return nil, err
+			return Entry{}, err
 		}
-		// Popola gli store precedenti (più veloci) che non avevano la chiave
+		// Popola gli store precedenti (più veloci) propagando TTL e tag originali
+		opts := entryOpts(entry)
 		for _, prev := range c.stores[:i] {
-			_ = prev.Set(ctx, key, val)
+			_ = prev.Set(ctx, key, entry.Value, opts...)
 		}
-		return val, nil
+		return entry, nil
 	}
-	return nil, ErrNotFound
+	return Entry{}, ErrNotFound
 }
 
-func (c *ChainStore) GetMany(ctx context.Context, keys []string) (map[string]any, error) {
-	result := make(map[string]any, len(keys))
+func (c *ChainStore) GetMany(ctx context.Context, keys []string) (map[string]Entry, error) {
+	result := make(map[string]Entry, len(keys))
 	missing := keys
 
 	for i, s := range c.stores {
@@ -46,14 +47,13 @@ func (c *ChainStore) GetMany(ctx context.Context, keys []string) (map[string]any
 		if err != nil {
 			return nil, err
 		}
-		for k, v := range found {
-			result[k] = v
-			// Popola gli store precedenti
+		for k, entry := range found {
+			result[k] = entry
+			opts := entryOpts(entry)
 			for _, prev := range c.stores[:i] {
-				_ = prev.Set(ctx, k, v)
+				_ = prev.Set(ctx, k, entry.Value, opts...)
 			}
 		}
-		// Calcola le chiavi ancora mancanti
 		next := missing[:0]
 		for _, k := range missing {
 			if _, ok := found[k]; !ok {
@@ -108,4 +108,16 @@ func (c *ChainStore) Close() error {
 		}
 	}
 	return nil
+}
+
+// entryOpts converte i metadati di un Entry nelle Option da passare a Set.
+func entryOpts(e Entry) []Option {
+	var opts []Option
+	if ttl := e.RemainingTTL(); ttl > 0 {
+		opts = append(opts, WithTTL(ttl))
+	}
+	if len(e.Tags) > 0 {
+		opts = append(opts, WithTags(e.Tags...))
+	}
+	return opts
 }

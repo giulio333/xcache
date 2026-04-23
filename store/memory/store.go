@@ -46,33 +46,32 @@ func (s *MemoryStore) getShard(key string) *shard {
 	return s.shards[h.Sum64()%s.numShards]
 }
 
-func (s *MemoryStore) Get(_ context.Context, key string) (any, error) {
+func (s *MemoryStore) Get(_ context.Context, key string) (xcache.Entry, error) {
 	sh := s.getShard(key)
 	sh.mu.RLock()
 	it, ok := sh.items[key]
 	sh.mu.RUnlock()
 
 	if !ok {
-		return nil, xcache.ErrNotFound
+		return xcache.Entry{}, xcache.ErrNotFound
 	}
 	if it.isExpired() {
-		// eviction passiva
 		sh.mu.Lock()
 		delete(sh.items, key)
 		sh.mu.Unlock()
-		return nil, xcache.ErrNotFound
+		return xcache.Entry{}, xcache.ErrNotFound
 	}
-	return it.value, nil
+	return xcache.Entry{Value: it.value, ExpiresAt: it.expiresAt, Tags: it.tags}, nil
 }
 
-func (s *MemoryStore) GetMany(ctx context.Context, keys []string) (map[string]any, error) {
-	result := make(map[string]any, len(keys))
+func (s *MemoryStore) GetMany(ctx context.Context, keys []string) (map[string]xcache.Entry, error) {
+	result := make(map[string]xcache.Entry, len(keys))
 	for _, k := range keys {
-		v, err := s.Get(ctx, k)
+		entry, err := s.Get(ctx, k)
 		if err != nil {
 			continue // chiavi mancanti/scadute vengono saltate
 		}
-		result[k] = v
+		result[k] = entry
 	}
 	return result, nil
 }
@@ -87,7 +86,7 @@ func (s *MemoryStore) Set(_ context.Context, key string, value any, opts ...xcac
 
 	sh := s.getShard(key)
 	sh.mu.Lock()
-	sh.items[key] = item{value: value, expiresAt: expiresAt}
+	sh.items[key] = item{value: value, expiresAt: expiresAt, tags: o.Tags}
 	for _, tag := range o.Tags {
 		sh.tags[tag] = append(sh.tags[tag], key)
 	}

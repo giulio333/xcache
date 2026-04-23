@@ -153,6 +153,50 @@ func TestGetOrLoad_Singleflight(t *testing.T) {
 		t.Fatalf("loader called %d times, expected 1", calls.Load())
 	}
 }
+func TestChainStore_TTLPreservedOnWriteBack(t *testing.T) {
+	l1 := memory.NewStore()
+	l2 := memory.NewStore()
+	chain := xcache.NewChain(l1, l2)
+	c := xcache.New[User](chain)
+	ctx := context.Background()
+
+	// Scrivi solo su L2 con TTL breve
+	_ = l2.Set(ctx, "u1", User{ID: 1}, xcache.WithTTL(100*time.Millisecond))
+
+	// Get: miss su L1, hit su L2 → write-back su L1 con TTL residuo
+	got, err := c.Get(ctx, "u1")
+	if err != nil {
+		t.Fatalf("expected hit, got %v", err)
+	}
+	if got.ID != 1 {
+		t.Fatalf("unexpected value: %v", got)
+	}
+
+	// Aspetta la scadenza del TTL originale
+	time.Sleep(150 * time.Millisecond)
+
+	// L1 deve aver già scaduto la chiave — non deve sopravvivere oltre il TTL di L2
+	_, err = l1.Get(ctx, "u1")
+	if err != xcache.ErrNotFound {
+		t.Fatal("L1 should have expired the key after the original TTL")
+	}
+}
+
+func TestCache_TypeMismatchReturnsError(t *testing.T) {
+	store := memory.NewStore()
+	ctx := context.Background()
+
+	// Scrivi un int nello store raw (bypassando i generics)
+	_ = store.Set(ctx, "k1", 42)
+
+	// Leggi con Cache[User]: il tipo non corrisponde → errore, non panic
+	c := xcache.New[User](store)
+	_, err := c.Get(ctx, "k1")
+	if err == nil {
+		t.Fatal("expected type mismatch error, got nil")
+	}
+}
+
 func BenchmarkSet(b *testing.B) {
 	c := NewCache()
 	ctx := context.Background()
