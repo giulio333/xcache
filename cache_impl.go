@@ -2,6 +2,7 @@ package xcache
 
 import (
 	"context"
+	"fmt"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -16,12 +17,17 @@ func New[T any](store Store) Cache[T] {
 }
 
 func (c *cache[T]) Get(ctx context.Context, key string) (T, error) {
-	val, err := c.store.Get(ctx, key)
+	entry, err := c.store.Get(ctx, key)
 	if err != nil {
 		var zero T
 		return zero, err
 	}
-	return val.(T), nil
+	val, ok := entry.Value.(T)
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("xcache: type mismatch for key %q", key)
+	}
+	return val, nil
 }
 
 func (c *cache[T]) Set(ctx context.Context, key string, value T, opts ...Option) error {
@@ -42,8 +48,12 @@ func (c *cache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, er
 		return nil, err
 	}
 	result := make(map[string]T, len(raw))
-	for k, v := range raw {
-		result[k] = v.(T)
+	for k, entry := range raw {
+		val, ok := entry.Value.(T)
+		if !ok {
+			return nil, fmt.Errorf("xcache: type mismatch for key %q", k)
+		}
+		result[k] = val
 	}
 	return result, nil
 }
@@ -59,7 +69,7 @@ func (c *cache[T]) GetOrLoad(ctx context.Context, key string, loader func(contex
 	}
 
 	// Singleflight: una sola chiamata al loader per chiave sotto carico concorrente
-	val, err, _ := c.group.Do(key, func() (any, error) {
+	v, err, _ := c.group.Do(key, func() (any, error) {
 		return loader(ctx)
 	})
 	if err != nil {
@@ -67,7 +77,11 @@ func (c *cache[T]) GetOrLoad(ctx context.Context, key string, loader func(contex
 		return zero, err
 	}
 
-	result := val.(T)
+	result, ok := v.(T)
+	if !ok {
+		var zero T
+		return zero, fmt.Errorf("xcache: loader returned unexpected type for key %q", key)
+	}
 	_ = c.store.Set(ctx, key, result, opts...)
 	return result, nil
 }

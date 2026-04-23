@@ -12,6 +12,7 @@ nav = [
   {"Architettura" = [
     "architecture/overview.md",
     "architecture/core.md",
+    "architecture/store-interface.md",
     "architecture/memory-store.md",
     "architecture/managers.md"
   ]},

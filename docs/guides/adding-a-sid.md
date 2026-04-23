@@ -25,16 +25,16 @@ func NewStore(client *memcache.Client) *MemcachedStore {
     return &MemcachedStore{client: client}
 }
 
-func (s *MemcachedStore) Get(ctx context.Context, key string) (any, error) {
+func (s *MemcachedStore) Get(ctx context.Context, key string) (xcache.Entry, error) {
     item, err := s.client.Get(key)
     if err == memcache.ErrCacheMiss {
-        return nil, xcache.ErrNotFound
+        return xcache.Entry{}, xcache.ErrNotFound
     }
     if err != nil {
-        return nil, err
+        return xcache.Entry{}, err
     }
     // deserializzare item.Value (JSON, protobuf, ecc.)
-    return item.Value, nil
+    return xcache.Entry{Value: item.Value}, nil
 }
 
 // ... implementare Set, Delete, DeleteMany, GetMany, Clear, Close
@@ -44,7 +44,8 @@ func (s *MemcachedStore) Get(ctx context.Context, key string) (any, error) {
 
 | Contratto | Note |
 |---|---|
-| `Get` restituisce `ErrNotFound` | Mai `nil, nil` per chiavi mancanti |
+| `Get` restituisce `ErrNotFound` | Mai `Entry{}, nil` per chiavi mancanti |
+| `Get` popola `Entry.ExpiresAt` | Necessario per propagare il TTL nella chain cache |
 | `GetMany` omette le chiavi mancanti | La mappa risultante ha solo le chiavi trovate |
 | `Close` libera le risorse | Connessioni, goroutine background |
 | `Set` rispetta il TTL | Se `opts.TTL > 0`, la chiave deve scadere |
