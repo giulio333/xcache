@@ -18,7 +18,7 @@ type MemoryStore struct {
 type shard struct {
 	mu    sync.RWMutex
 	items map[string]item
-	tags  map[string][]string // tag → []key
+	tags  map[string]map[string]struct{} // tag → set of keys
 }
 
 func NewStore(opts ...StoreOption) *MemoryStore {
@@ -32,7 +32,7 @@ func NewStore(opts ...StoreOption) *MemoryStore {
 	for i := range s.shards {
 		s.shards[i] = &shard{
 			items: make(map[string]item),
-			tags:  make(map[string][]string),
+			tags:  make(map[string]map[string]struct{}),
 		}
 	}
 
@@ -57,6 +57,7 @@ func (s *MemoryStore) Get(_ context.Context, key string) (xcache.Entry, error) {
 	}
 	if it.isExpired() {
 		sh.mu.Lock()
+		removeFromTagIndex(sh, key, it.tags)
 		delete(sh.items, key)
 		sh.mu.Unlock()
 		return xcache.Entry{}, xcache.ErrNotFound
@@ -86,9 +87,16 @@ func (s *MemoryStore) Set(_ context.Context, key string, value any, opts ...xcac
 
 	sh := s.getShard(key)
 	sh.mu.Lock()
+	// Rimuovi la chiave dall'indice precedente prima di sovrascrivere
+	if old, exists := sh.items[key]; exists {
+		removeFromTagIndex(sh, key, old.tags)
+	}
 	sh.items[key] = item{value: value, expiresAt: expiresAt, tags: o.Tags}
 	for _, tag := range o.Tags {
-		sh.tags[tag] = append(sh.tags[tag], key)
+		if sh.tags[tag] == nil {
+			sh.tags[tag] = make(map[string]struct{})
+		}
+		sh.tags[tag][key] = struct{}{}
 	}
 	sh.mu.Unlock()
 	return nil
@@ -97,8 +105,29 @@ func (s *MemoryStore) Set(_ context.Context, key string, value any, opts ...xcac
 func (s *MemoryStore) Delete(_ context.Context, key string) error {
 	sh := s.getShard(key)
 	sh.mu.Lock()
-	delete(sh.items, key)
+	if it, ok := sh.items[key]; ok {
+		removeFromTagIndex(sh, key, it.tags)
+		delete(sh.items, key)
+	}
 	sh.mu.Unlock()
+	return nil
+}
+
+func (s *MemoryStore) DeleteByTag(_ context.Context, tag string) error {
+	for _, sh := range s.shards {
+		sh.mu.Lock()
+		keys := make([]string, 0, len(sh.tags[tag]))
+		for key := range sh.tags[tag] {
+			keys = append(keys, key)
+		}
+		for _, key := range keys {
+			if it, ok := sh.items[key]; ok {
+				removeFromTagIndex(sh, key, it.tags)
+				delete(sh.items, key)
+			}
+		}
+		sh.mu.Unlock()
+	}
 	return nil
 }
 
@@ -113,10 +142,21 @@ func (s *MemoryStore) Clear(_ context.Context) error {
 	for _, sh := range s.shards {
 		sh.mu.Lock()
 		sh.items = make(map[string]item)
-		sh.tags = make(map[string][]string)
+		sh.tags = make(map[string]map[string]struct{})
 		sh.mu.Unlock()
 	}
 	return nil
+}
+
+// removeFromTagIndex rimuove key dall'indice per ciascuno dei suoi tag.
+// Deve essere chiamato con sh.mu già acquisito in scrittura.
+func removeFromTagIndex(sh *shard, key string, tags []string) {
+	for _, tag := range tags {
+		delete(sh.tags[tag], key)
+		if len(sh.tags[tag]) == 0 {
+			delete(sh.tags, tag)
+		}
+	}
 }
 
 func (s *MemoryStore) Close() error {
@@ -134,6 +174,7 @@ func (s *MemoryStore) sweep(interval time.Duration) {
 				sh.mu.Lock()
 				for k, it := range sh.items {
 					if it.isExpired() {
+						removeFromTagIndex(sh, k, it.tags)
 						delete(sh.items, k)
 					}
 				}

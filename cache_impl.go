@@ -62,6 +62,10 @@ func (c *cache[T]) DeleteMany(ctx context.Context, keys []string) error {
 	return c.store.DeleteMany(ctx, keys)
 }
 
+func (c *cache[T]) DeleteByTag(ctx context.Context, tag string) error {
+	return c.store.DeleteByTag(ctx, tag)
+}
+
 func (c *cache[T]) GetOrLoad(ctx context.Context, key string, loader func(context.Context) (T, error), opts ...Option) (T, error) {
 	// Prima prova dalla cache
 	if val, err := c.Get(ctx, key); err == nil {

@@ -101,6 +101,15 @@ func (c *ChainStore) Clear(ctx context.Context) error {
 	return nil
 }
 
+func (c *ChainStore) DeleteByTag(ctx context.Context, tag string) error {
+	for _, s := range c.stores {
+		if err := s.DeleteByTag(ctx, tag); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *ChainStore) Close() error {
 	for _, s := range c.stores {
 		if err := s.Close(); err != nil {

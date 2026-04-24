@@ -9,6 +9,9 @@ import (
 // ErrNotFound is returned when a key is not found or has expired.
 var ErrNotFound = errors.New("xcache: key not found")
 
+// ErrNotSupported is returned when the backend does not implement an optional operation.
+var ErrNotSupported = errors.New("xcache: operation not supported by this backend")
+
 // Entry holds a cached value together with its storage metadata.
 // ExpiresAt is zero when the entry has no expiration.
 type Entry struct {
@@ -36,6 +39,7 @@ type Store interface {
 	Close() error
 	GetMany(ctx context.Context, keys []string) (map[string]Entry, error)
 	DeleteMany(ctx context.Context, keys []string) error
+	DeleteByTag(ctx context.Context, tag string) error
 }
 
 type Cache[T any] interface {
@@ -46,4 +50,5 @@ type Cache[T any] interface {
 	GetOrLoad(ctx context.Context, key string, loader func(ctx context.Context) (T, error), opts ...Option) (T, error)
 	GetMany(ctx context.Context, keys []string) (map[string]T, error)
 	DeleteMany(ctx context.Context, keys []string) error
+	DeleteByTag(ctx context.Context, tag string) error
 }
