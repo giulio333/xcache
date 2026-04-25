@@ -23,6 +23,8 @@ nav = [
     "guides/key-prefix.md",
     "guides/logging-middleware.md",
     "guides/readonly-middleware.md",
+    "guides/metrics-middleware.md",
+    "guides/timeout-middleware.md",
     "guides/adding-a-sid.md"
   ]}
 ]
