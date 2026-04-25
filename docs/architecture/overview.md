@@ -1,56 +1,33 @@
-# Panoramica dell'architettura
+# Architettura
 
-XCache è organizzato in layer distinti con responsabilità ben separate.
+XCache è costruita attorno a un'idea semplice: separare la type safety dalla persistenza. Il codice applicativo lavora sempre con tipi concreti; i backend lavorano sempre con `any`. Il layer sottile che sta in mezzo — `Cache[T]` — traduce tra i due mondi senza aggiungere logica.
 
 ```mermaid
 graph TD
-    User["Codice utente"]
-    CacheT["Cache[T]\nAPI generica type-safe"]
-    Impl["cache[T]\nimplementazione concreta"]
-    Singleflight["singleflight.Group\nGetOrLoad"]
+    App["Codice applicativo"]
+    CacheT["Cache[T]\ntype-safe layer"]
     Middleware["Middleware\nlogging · readonly · timeout · metrics"]
-    Chain["ChainStore\nL1 → L2 fallback"]
-    Store["Store\ninterfaccia backend"]
-    Memory["MemoryStore\nshards + tag index"]
+    Chain["ChainStore\nL1 → L2"]
+    Memory["MemoryStore"]
     Redis["RedisStore"]
 
-    User --> CacheT
-    CacheT --> Impl
-    Impl --> Singleflight
-    Impl --> Middleware
-    Middleware --> Store
-    Store --> Chain
+    App --> CacheT
+    CacheT --> Middleware
+    Middleware --> Chain
     Chain --> Memory
     Chain --> Redis
 ```
 
-## Componenti
+**`Cache[T]`** è il punto di accesso dell'applicazione. Non gestisce persistenza — avvolge uno `Store` aggiungendo esclusivamente la firma generica. Inserisci una `User`, recuperi una `User`, senza type assertion.
 
-`Store`
-:   Interfaccia che ogni backend deve implementare. Lavora con `any` internamente, ignora i tipi concreti. Definisce anche le operazioni opzionali (es. `DeleteByTag`) che backend non a tag possono rifiutare con `ErrNotSupported`.
+**`Store`** è l'interfaccia che ogni backend implementa. Lavora con `any`, è ignaro dei tipi concreti, e si occupa di lettura, scrittura e invalidazione. La stessa istanza può servire contemporaneamente una `Cache[User]` e una `Cache[Product]`.
 
-`Cache[T]`
-:   Interfaccia generica esposta all'utente. Type-safe: nessun type assertion visibile fuori da `cache_impl.go`.
+**I middleware** decorano qualsiasi `Store` con comportamento trasversale — logging, timeout, metriche, sola lettura — senza modificare né il backend né il codice applicativo. Si compongono per annidamento: `logging.Wrap(timeout.Wrap(store, 50ms), logger)`.
 
-`cache[T]`
-:   Implementazione concreta di `Cache[T]`. Fa da traduttore tra il mondo generico (`T`) e il mondo `any` dello `Store`. Contiene il `singleflight.Group` per `GetOrLoad`.
-
-`Middleware`
-:   Decorator su `Store` composti per annidamento. Ogni middleware è una funzione `func(Store) Store` — nessun tipo aggiuntivo nel core. Disponibili: `logging`, `readonly`, `timeout`, `metrics`.
-
-`ChainStore`
-:   Decorator che mette in cascata più `Store`. Implementa il pattern L1→L2: se L1 manca la chiave, la cerca in L2 e la ripopola in L1 propagando TTL e tag originali.
-
-`MemoryStore`
-:   Backend in-memory con sharding, TTL passivo (al `Get`), sweep attivo (goroutine background) e indice tag basato su set per `DeleteByTag`.
-
-## Principio di separazione
-
-!!! note "Store gestisce byte, Cache[T] gestisce tipi"
-    `Store` è generico rispetto ai tipi: la stessa istanza `RedisStore` può servire sia `Cache[User]` che `Cache[Product]`. `Cache[T]` è il layer sottile che aggiunge la type-safety sopra.
+**`ChainStore`** è un middleware speciale che mette in cascata più backend: in lettura scorre i tier da sinistra a destra e ripopola automaticamente quelli precedenti al hit, propagando TTL residuo e tag originali.
 
 ---
 
-*[L1]: Layer 1 — cache veloce in memoria
-*[L2]: Layer 2 — cache distribuita (Redis)
 *[TTL]: Time To Live
+*[L1]: Layer 1 — cache veloce in memoria
+*[L2]: Layer 2 — cache distribuita

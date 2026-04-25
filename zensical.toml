@@ -9,12 +9,11 @@ edit_uri = "edit/main/docs/"
 
 nav = [
   {"Home" = "index.md"},
-  {"Architettura" = [
+  {"Concetti" = [
     "architecture/overview.md",
-    "architecture/core.md",
-    "architecture/store-interface.md",
-    "architecture/memory-store.md",
-    "architecture/managers.md"
+    "architecture/cache-model.md",
+    "architecture/stampede.md",
+    "architecture/chain.md"
   ]},
   {"Guide" = [
     "guides/getting-started.md",
@@ -26,6 +25,12 @@ nav = [
     "guides/metrics-middleware.md",
     "guides/timeout-middleware.md",
     "guides/adding-a-sid.md"
+  ]},
+  {"Reference" = [
+    "reference/cache.md",
+    "reference/store.md",
+    "reference/backends.md",
+    "reference/middleware.md"
   ]}
 ]
 
