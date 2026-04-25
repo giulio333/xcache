@@ -1,157 +1,62 @@
 # XCache
 
-> **WIP** — work in progress
+Type-safe Go caching library with pluggable backends.
 
-A type-safe, zero-config Go caching library with pluggable backends.
+```bash
+go get github.com/giulio333/xcache
+```
+
+Requires Go 1.21+.
+
+## Quick start
 
 ```go
-// One line to start
-cache := xcache.New[User](memory.NewStore())
+store := memory.NewStore()
+defer store.Close()
 
-// Scale to Redis when needed
-l1 := memory.NewStore(memory.WithShards(64))
-l2 := redis.NewStore(redisClient)
-userCache := xcache.New[User](xcache.NewChain(l1, l2))
+cache := xcache.New[User](store)
 
-// Cache stampede protection built-in
-user, err := userCache.GetOrLoad(ctx, "user:123", func(ctx context.Context) (User, error) {
-    return db.FindUserByID(123)
-}, xcache.WithTTL(10*time.Minute))
+// Write
+cache.Set(ctx, "user:1", User{ID: 1, Name: "Alice"}, xcache.WithTTL(5*time.Minute))
 
-// Group invalidation by tag
-_ = userCache.Set(ctx, "user:123", u, xcache.WithTags("users"))
-_ = userCache.DeleteByTag(ctx, "users")
+// Read
+user, err := cache.Get(ctx, "user:1")
+if errors.Is(err, xcache.ErrNotFound) { ... }
+
+// Read with DB fallback — stampede-safe
+user, err = cache.GetOrLoad(ctx, "user:1", func(ctx context.Context) (User, error) {
+    return db.FindUser(1)
+}, xcache.WithTTL(5*time.Minute))
+
+// Group invalidation
+cache.Set(ctx, "user:2", u2, xcache.WithTags("users"))
+cache.DeleteByTag(ctx, "users")
+
+// L1 → L2 chain
+l1 := memory.NewStore()
+l2 := redis.NewStore(client)
+cache = xcache.New[User](xcache.NewChain(l1, l2))
+
+// Middleware
+store = logging.Wrap(timeout.Wrap(memory.NewStore(), 50*time.Millisecond), logger)
 ```
 
 ## Features
 
 - **Type-safe generics API** — no type assertions, ever
-- **Zero-config** — works in-memory with one line
-- **Pluggable backends** — Memory (built-in), Redis, Memcached
-- **Chain cache** — L1 (memory) → L2 (Redis) fallback with automatic
-  back-fill that preserves the original TTL and tags
-- **Singleflight** — prevents cache stampede on `GetOrLoad`
-- **Tag-based invalidation** — group keys with `WithTags`, drop them
-  together with `DeleteByTag`
+- **Pluggable backends** — Memory (built-in), Redis, or bring your own
+- **Cache stampede protection** — singleflight built into `GetOrLoad`
+- **Tag-based invalidation** — group keys with `WithTags`, drop them with `DeleteByTag`
+- **Chain cache** — L1/L2 fallback with automatic backfill preserving TTL and tags
 - **Middleware** — logging, read-only, per-operation timeout, backend-agnostic metrics
 
-## API at a glance
+## Documentation
 
-```go
-type Cache[T any] interface {
-    Get(ctx, key) (T, error)
-    GetMany(ctx, keys) (map[string]T, error)
-    Set(ctx, key, value, opts...) error
-    Delete(ctx, key) error
-    DeleteMany(ctx, keys) error
-    DeleteByTag(ctx, tag) error
-    Clear(ctx) error
-    GetOrLoad(ctx, key, loader, opts...) (T, error)
-}
-```
+Full documentation at **[giulio333.github.io/xcache](https://giulio333.github.io/xcache)**.
 
-Errors:
-
-- `ErrNotFound` — returned by `Get` for missing or expired keys
-- `ErrNotSupported` — returned by backends that do not implement an
-  optional operation (for example, a Redis store without a tag index)
-
-Options for `Set` and `GetOrLoad`:
-
-- `WithTTL(d time.Duration)` — entry deadline (`0` = no expiration)
-- `WithTags(tags ...string)` — labels for group invalidation
-
-Construction-time options for `New`:
-
-- `WithPrefix(prefix string)` — prepend a fixed string to every key before it
-  reaches the Store. Callers always use short keys; the translation is
-  transparent. An empty prefix is a no-op.
-
-  ```go
-  userCache := xcache.New[User](store, xcache.WithPrefix("users:"))
-  _ = userCache.Set(ctx, "1", u)         // stored as "users:1"
-  u, _ := userCache.Get(ctx, "1")        // reads "users:1", returns User
-  result, _ := userCache.GetMany(ctx, []string{"1", "2"})
-  // result keys are "1" and "2" (prefix stripped in output)
-  ```
-
-## Middleware
-
-Middlewares wrap any `Store` and are composed by nesting:
-
-```go
-store := logging.Wrap(
-    timeout.Wrap(
-        metrics.Wrap(memory.NewStore(), rec),
-        5*time.Second,
-    ),
-    logger,
-)
-cache := xcache.New[User](store)
-```
-
-### Logging
-
-Structured `log/slog` entries for every operation. `ErrNotFound` and `ErrNotSupported` are logged at `DEBUG`; real errors at `ERROR`. Pass `nil` to fall back to `slog.Default()`.
-
-```go
-store := logging.Wrap(memory.NewStore(), logger)
-```
-
-### Read-only
-
-Blocks all write operations (`Set`, `Delete`, `DeleteMany`, `DeleteByTag`, `Clear`) and returns the exported `ErrReadOnly` sentinel. Useful for staging environments or shared read-only caches.
-
-```go
-store := readonly.Wrap(memory.NewStore())
-// store.Set(...) → readonly.ErrReadOnly
-```
-
-### Timeout
-
-Wraps every operation with `context.WithTimeout`, protecting against slow backends. `d <= 0` is a no-op.
-
-```go
-store := timeout.Wrap(memory.NewStore(), 200*time.Millisecond)
-```
-
-### Metrics
-
-Exposes a `Recorder` interface so you can plug in any metrics backend (Prometheus, StatsD, DataDog) without the middleware carrying external dependencies.
-
-```go
-type Recorder interface {
-    RecordHit(op string)
-    RecordMiss(op string)
-    RecordError(op string)
-    RecordDuration(op string, d time.Duration)
-}
-
-store := metrics.Wrap(memory.NewStore(), myRecorder)
-```
-
-## Testing
-
-```bash
-# Unit tests (verbose)
-go test -v ./...
-
-# With race detector
-go test -v -race ./...
-
-# Benchmarks (all cores: 1, 2, 4, 8)
-# Linux / macOS
-go test -bench=. -benchmem -cpu=1,2,4,8 ./...
-# Windows (PowerShell)
-go test --% -bench=. -benchmem -cpu=1,2,4,8 ./...
-
-# Specific package
-go test -v ./store/memory/...
-```
-
-## Requirements
-
-Go 1.21+
+- [Getting started](https://giulio333.github.io/xcache/guides/getting-started/)
+- [Concepts](https://giulio333.github.io/xcache/architecture/overview/)
+- [API reference](https://giulio333.github.io/xcache/reference/cache/)
 
 ## License
 
