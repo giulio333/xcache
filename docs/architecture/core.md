@@ -171,6 +171,35 @@ for i, s := range c.stores {
 
 ---
 
+## `CacheOption` e `WithPrefix`
+
+`CacheOption` è distinto da `Option`: configura la `Cache[T]` a tempo di costruzione, non la singola chiamata `Set`/`GetOrLoad`.
+
+```go title="options.go"
+type CacheOption func(prefix *string)
+
+func WithPrefix(prefix string) CacheOption {
+    return func(p *string) { *p = prefix }
+}
+```
+
+Il campo `prefix` vive in `cache[T]` e viene applicato (e rimosso) da tre helper privati:
+
+```go title="cache_impl.go"
+func (c *cache[T]) prefixKey(key string) string      // aggiunge il prefisso
+func (c *cache[T]) prefixKeys(keys []string) []string // batch
+func (c *cache[T]) stripPrefix(key string) string     // rimuove il prefisso (output di GetMany)
+```
+
+Se il prefisso è stringa vuota — il default — questi helper sono no-op senza allocazioni.
+
+`GetOrLoad` usa la chiave già prefissata come token di deduplicazione per `singleflight.Group`: chiamate concorrenti su `"1"` con prefisso `"users:"` si coalescing correttamente su `"users:1"`.
+
+!!! note "CacheOption vs Option"
+    `Option` (es. `WithTTL`, `WithTags`) muta le opzioni di una singola scrittura e viene passata a `Set`/`GetOrLoad`. `CacheOption` muta la configurazione permanente della cache e viene passata a `New[T]`. Non sono interscambiabili.
+
+---
+
 ## `applyOptions` — costruzione delle opzioni
 
 ```go title="options.go"
@@ -183,7 +212,20 @@ func ApplyOptions(opts []Option) *Options {
 }
 ```
 
-Implementazione del **Functional Options Pattern**: ogni `Option` è una funzione che modifica `*Options`. L'utente non vede mai la struct `Options` direttamente — interagisce solo con `WithTTL`, `WithTags`, ecc.
+Implementazione del **Functional Options Pattern**: ogni `Option` è una funzione che modifica `*Options`. L'utente non vede mai la struct `Options` direttamente — interagisce solo con i costruttori.
+
+Opzioni disponibili per chiamata (`Option`, passate a `Set`/`GetOrLoad`):
+
+| Costruttore | Effetto |
+|---|---|
+| `WithTTL(d time.Duration)` | Imposta la scadenza dell'entry |
+| `WithTags(tags ...string)` | Associa tag per l'invalidazione di gruppo |
+
+Opzioni disponibili a costruzione (`CacheOption`, passate a `New[T]`):
+
+| Costruttore | Effetto |
+|---|---|
+| `WithPrefix(prefix string)` | Antepone una stringa fissa a ogni chiave |
 
 Vantaggi rispetto a una struct di configurazione esposta:
 - Aggiungere nuove opzioni non rompe la firma delle funzioni esistenti

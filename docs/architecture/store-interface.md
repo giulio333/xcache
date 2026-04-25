@@ -101,6 +101,8 @@ Entrambi vanno controllati con `errors.Is`.
 
 Per un esempio completo di implementazione, vedere la [guida all'aggiunta di un backend](../guides/adding-a-sid.md).
 
+Le opzioni di costruzione per `Cache[T]` (come `WithPrefix`) sono separate dalle `Option` per `Set` — vedere [Meccanismi interni § CacheOption e WithPrefix](core.md#cacheoption-e-withprefix).
+
 ---
 
 *[TTL]: Time To Live

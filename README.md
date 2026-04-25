@@ -61,6 +61,20 @@ Options for `Set` and `GetOrLoad`:
 - `WithTTL(d time.Duration)` — entry deadline (`0` = no expiration)
 - `WithTags(tags ...string)` — labels for group invalidation
 
+Construction-time options for `New`:
+
+- `WithPrefix(prefix string)` — prepend a fixed string to every key before it
+  reaches the Store. Callers always use short keys; the translation is
+  transparent. An empty prefix is a no-op.
+
+  ```go
+  userCache := xcache.New[User](store, xcache.WithPrefix("users:"))
+  _ = userCache.Set(ctx, "1", u)         // stored as "users:1"
+  u, _ := userCache.Get(ctx, "1")        // reads "users:1", returns User
+  result, _ := userCache.GetMany(ctx, []string{"1", "2"})
+  // result keys are "1" and "2" (prefix stripped in output)
+  ```
+
 ## Middleware
 
 ### Logging
