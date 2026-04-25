@@ -83,13 +83,19 @@ func (s *MemoryStore) Get(_ context.Context, key string) (xcache.Entry, error) {
 	it, ok := sh.items[key]
 	sh.mu.RUnlock()
 
+	// key not found
 	if !ok {
 		return xcache.Entry{}, xcache.ErrNotFound
 	}
+
 	if it.isExpired() {
 		sh.mu.Lock()
-		removeFromTagIndex(sh, key, it.tags)
-		delete(sh.items, key)
+		// Re-read under write lock: a concurrent Set may have replaced the
+		// expired entry. Only evict if expiresAt is unchanged.
+		if current, ok := sh.items[key]; ok && current.expiresAt.Equal(it.expiresAt) {
+			removeFromTagIndex(sh, key, it.tags)
+			delete(sh.items, key)
+		}
 		sh.mu.Unlock()
 		return xcache.Entry{}, xcache.ErrNotFound
 	}
