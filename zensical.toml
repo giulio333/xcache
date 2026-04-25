@@ -22,6 +22,7 @@ nav = [
     "guides/tag-invalidation.md",
     "guides/key-prefix.md",
     "guides/logging-middleware.md",
+    "guides/readonly-middleware.md",
     "guides/adding-a-sid.md"
   ]}
 ]
