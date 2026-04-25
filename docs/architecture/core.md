@@ -1,159 +1,197 @@
-# API pubblica
+# Meccanismi interni
 
-Documentazione delle interfacce e funzioni esposte all'utente finale della libreria.
+Documentazione dei componenti interni non esposti all'utente finale.
 
 ---
 
-## Interfaccia `Cache[T]`
+## `cache[T]` — implementazione di `Cache[T]`
 
-API generica esposta all'utente. Nessun type assertion richiesto.
-
-```go
-type Cache[T any] interface {
-    Get(ctx context.Context, key string) (T, error)
-    GetMany(ctx context.Context, keys []string) (map[string]T, error)
-    Set(ctx context.Context, key string, value T, opts ...Option) error
-    Delete(ctx context.Context, key string) error
-    DeleteMany(ctx context.Context, keys []string) error
-    Clear(ctx context.Context) error
-    GetOrLoad(ctx context.Context, key string, loader func(context.Context) (T, error), opts ...Option) (T, error)
+```go title="cache_impl.go"
+type cache[T any] struct {
+    store Store
+    group singleflight.Group
 }
 ```
 
-### `Get`
+Fa da **traduttore** tra il mondo generico (`T`) e il mondo `any` dello `Store`. Contiene l'unico type assertion di tutta la libreria:
 
-Ritorna il valore tipizzato associato alla chiave. Se la chiave non esiste o è scaduta, ritorna `ErrNotFound`.
-
-```go
-user, err := cache.Get(ctx, "user:1")
-if errors.Is(err, xcache.ErrNotFound) {
-    // chiave assente o scaduta
+```go title="cache_impl.go"
+val, ok := entry.Value.(T) // (1)
+if !ok {
+    return zero, fmt.Errorf("xcache: type mismatch for key %q", key)
 }
 ```
 
-### `GetMany`
+1. Unico punto in cui `any` viene convertito al tipo concreto. In caso di mismatch viene ritornato un errore tipizzato — mai un panic — così un misuso (stesso `Store` condiviso da `Cache[T]` con namespace di chiave sovrapposti) è osservabile dal chiamante.
 
-Ritorna una mappa `map[string]T` con i valori trovati. Le chiavi mancanti o scadute vengono omesse.
+### Singleflight in `GetOrLoad`
 
-```go
-users, err := cache.GetMany(ctx, []string{"user:1", "user:2", "user:3"})
-// users contiene solo le chiavi presenti in cache
+```go title="cache_impl.go"
+val, err, _ := c.group.Do(key, func() (any, error) { // (1)
+    return loader(ctx)
+})
 ```
 
-### `Set`
+1. `group.Do` garantisce che per la stessa chiave, sotto carico concorrente, `loader` venga chiamato una sola volta. Le altre goroutine aspettano su un `WaitGroup` interno e ricevono lo stesso risultato.
 
-Scrive un valore tipizzato. Accetta `Option` per TTL e tag.
+Come funziona `singleflight.Group` internamente:
 
-```go
-cache.Set(ctx, "user:1", user, xcache.WithTTL(5*time.Minute))
+```
+goroutine 1 → group.Do("key", fn)
+  nessuna chiamata in corso → esegue fn(), crea entry con WaitGroup
+
+goroutine 2, 3, ... → group.Do("key", fn)
+  chiamata in corso → wg.Wait()  ← bloccate qui
+
+fn() termina → wg.Done()
+  tutte le goroutine in attesa si sbloccano e leggono lo stesso risultato
 ```
 
-### `Delete`
-
-Rimuove una chiave. Non ritorna errore se la chiave non esiste.
-
-```go
-cache.Delete(ctx, "user:1")
-```
-
-### `DeleteMany`
-
-Rimuove più chiavi in una sola chiamata.
-
-```go
-cache.DeleteMany(ctx, []string{"user:1", "user:2"})
-```
-
-### `Clear`
-
-Rimuove tutte le chiavi dalla cache.
-
-```go
-cache.Clear(ctx)
-```
-
-### `GetOrLoad`
-
-Combina Get + Set con protezione dalla **cache stampede**:
-
-1. Se la chiave esiste in cache → la ritorna immediatamente
-2. Se manca → esegue `loader` una sola volta, anche sotto carico concorrente (singleflight)
-3. Salva il risultato in cache con le `opts` fornite
-
-```go
-user, err := cache.GetOrLoad(ctx, "user:1", func(ctx context.Context) (User, error) {
-    return db.FindUserByID(1)  // chiamato una sola volta anche con 10.000 richieste concorrenti
-}, xcache.WithTTL(5*time.Minute))
-```
+Il lock interno viene rilasciato immediatamente dopo aver registrato la chiamata — le goroutine non si accodano sul mutex ma sul WaitGroup, che scala senza contesa.
 
 ---
 
-## `ErrNotFound`
+## `MemoryStore` — sharding
 
-```go
-var ErrNotFound = errors.New("xcache: key not found")
-```
+```go title="store/memory/store.go"
+type MemoryStore struct {
+    shards    []*shard  // 64 per default
+    numShards uint64
+    stopSweep chan struct{}
+}
 
-Ritornato da `Get` quando la chiave non esiste o il TTL è scaduto. Usare sempre `errors.Is`:
-
-```go
-_, err := cache.Get(ctx, "key")
-if errors.Is(err, xcache.ErrNotFound) {
-    // chiave assente
+type shard struct {
+    mu    sync.RWMutex
+    items map[string]item
+    tags  map[string]map[string]struct{} // tag → set di chiavi
 }
 ```
 
----
+La chiave viene distribuita sugli shard tramite hash FNV-1a:
 
-## `New[T]`
-
-```go
-func New[T any](store Store) Cache[T]
+```go title="store/memory/store.go"
+func (s *MemoryStore) getShard(key string) *shard {
+    h := fnv.New64a()
+    h.Write([]byte(key))
+    return s.shards[h.Sum64()%s.numShards]
+}
 ```
 
-Crea un'istanza di `Cache[T]` che usa `store` come backend. Lo stesso store può essere condiviso tra cache di tipi diversi:
+Con 64 shard, 64 richieste concorrenti su chiavi diverse possono procedere in parallelo senza bloccarsi a vicenda. Un solo shard con `sync.RWMutex` globale creerebbe un collo di bottiglia sotto alto parallelismo.
 
-```go
-store := memory.NewStore()
-users    := xcache.New[User](store)
-products := xcache.New[Product](store)
-```
-
----
-
-## `NewChain`
-
-```go
-func NewChain(stores ...Store) *ChainStore
-```
-
-Crea uno store a cascata. Vedere la [guida sulla chain cache](../guides/chain-cache.md).
+L'indice tag è un set (`map[string]struct{}`) per chiave: questo elimina i duplicati su `Set` ripetuti e dà lookup/cancellazione O(1) per chiave durante `DeleteByTag`.
 
 ---
 
-## Options
+## `MemoryStore` — TTL passivo e attivo
 
-```go
-func WithTTL(d time.Duration) Option
-func WithTags(tags ...string) Option
+Due meccanismi cooperano per rimuovere le chiavi scadute:
+
+**Passivo** (al momento della lettura):
+
+```go title="store/memory/store.go"
+if it.isExpired() {
+    sh.mu.Lock()
+    removeFromTagIndex(sh, key, it.tags)
+    delete(sh.items, key)
+    sh.mu.Unlock()
+    return xcache.Entry{}, xcache.ErrNotFound
+}
 ```
 
-### `WithTTL`
+Rimuove la chiave (e le sue voci nell'indice tag) quando viene letta dopo la scadenza. Non richiede goroutine, ma lascia chiavi scadute in memoria finché non vengono richieste.
 
-Imposta la scadenza della chiave. `WithTTL(0)` equivale a nessuna scadenza (default).
+**Attivo** (goroutine background):
 
-```go
-xcache.WithTTL(5 * time.Minute)
+```go title="store/memory/store.go"
+func (s *MemoryStore) sweep(interval time.Duration) {
+    ticker := time.NewTicker(interval)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ticker.C:
+            for _, sh := range s.shards {
+                sh.mu.Lock()
+                for k, it := range sh.items {
+                    if it.isExpired() {
+                        removeFromTagIndex(sh, k, it.tags)
+                        delete(sh.items, k)
+                    }
+                }
+                sh.mu.Unlock()
+            }
+        case <-s.stopSweep:
+            return
+        }
+    }
+}
 ```
 
-### `WithTags`
+Itera tutti gli shard ogni `sweepInterval` (default: 1 minuto) e rimuove le chiavi scadute anche se mai rilette. Prevenzione OOM su workload con alto tasso di scrittura e bassa rilettura.
 
-Associa uno o più tag alla chiave per invalidazione di gruppo.
-
-```go
-xcache.WithTags("users", "admin")
-```
+!!! warning "Chiamare sempre `Close()`"
+    `Close()` chiude il canale `stopSweep` e termina la goroutine di sweep. Senza `Close()`, la goroutine rimane attiva per tutta la vita del processo.
 
 ---
 
+## `MemoryStore` — invariante dell'indice tag
+
+Quattro punti scrivono nello shard e devono mantenere l'indice coerente con la mappa `items`:
+
+| Operazione | Effetto sull'indice |
+|---|---|
+| `Set` (nuova chiave) | Aggiunge la chiave al set di ciascun tag |
+| `Set` (overwrite) | Rimuove la chiave dai tag vecchi prima di aggiungerla ai nuovi |
+| `Delete` | Rimuove la chiave da tutti i tag a cui era associata |
+| `Get` (chiave scaduta) | Stesso comportamento di `Delete` |
+| `sweep` | Stesso comportamento di `Delete`, su tutte le chiavi scadute |
+
+L'helper `removeFromTagIndex` centralizza la rimozione (rimuovere la chiave dal set, e se il set rimane vuoto rimuovere anche il bucket del tag) e va sempre invocato con il write lock dello shard già acquisito.
+
+---
+
+## `ChainStore` — backfill automatico
+
+Quando `Get` trova la chiave nello store `i` (non nel primo), ripopola automaticamente tutti gli store precedenti propagando TTL e tag originali:
+
+```go title="chain.go"
+for i, s := range c.stores {
+    entry, err := s.Get(ctx, key)
+    if err != nil { continue }
+
+    opts := entryOpts(entry) // (1)
+    for _, prev := range c.stores[:i] {
+        _ = prev.Set(ctx, key, entry.Value, opts...)
+    }
+    return entry, nil
+}
+```
+
+1. `entryOpts` ricostruisce le `Option` (`WithTTL`, `WithTags`) a partire dai metadati dell'`Entry`. Il backfill conserva quindi sia la scadenza residua sia le label di gruppo, così `DeleteByTag` continua a funzionare anche sui tier ripopolati.
+
+---
+
+## `applyOptions` — costruzione delle opzioni
+
+```go title="options.go"
+func ApplyOptions(opts []Option) *Options {
+    o := &Options{}
+    for _, opt := range opts {
+        opt(o)
+    }
+    return o
+}
+```
+
+Implementazione del **Functional Options Pattern**: ogni `Option` è una funzione che modifica `*Options`. L'utente non vede mai la struct `Options` direttamente — interagisce solo con `WithTTL`, `WithTags`, ecc.
+
+Vantaggi rispetto a una struct di configurazione esposta:
+- Aggiungere nuove opzioni non rompe la firma delle funzioni esistenti
+- I valori di default stanno in `&Options{}`, non in ogni call site
+- L'API rimane leggibile: `xcache.WithTTL(5*time.Minute)` si legge come una frase
+
+---
+
+*[OOM]: Out Of Memory
 *[TTL]: Time To Live
+*[FNV]: Fowler–Noll–Vo hash function
