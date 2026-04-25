@@ -1,6 +1,6 @@
 # Chain cache (L1 → L2)
 
-`ChainStore` mette in cascata più backend: il primo che risponde vince, gli store precedenti vengono ripopolati automaticamente.
+`ChainStore` mette in cascata più backend: il primo che risponde vince, gli store precedenti vengono ripopolati automaticamente preservando TTL e tag originali.
 
 ## Setup
 
@@ -25,29 +25,36 @@ cache := xcache.New[User](xcache.NewChain(l1, l2))
 ```
 Get("user:1")
   └─ L1.Get → miss
-       └─ L2.Get → hit → backfill L1 → ritorna valore
+       └─ L2.Get → hit → backfill L1 con TTL e tag → ritorna valore
 ```
 
 Alla richiesta successiva L1 ha già la chiave — L2 non viene toccato.
 
-**Scrittura e cancellazione** propagano a tutti gli store in ordine.
+**Scrittura, cancellazione e `DeleteByTag`** propagano a tutti gli store in ordine. La prima operazione che fallisce ferma la propagazione.
 
-## Backfill senza TTL
+## TTL e tag preservati nel backfill
 
-!!! warning "TTL non propagato nel backfill"
-    Quando `Get` ripopola L1 da L2, usa le `Option` di default (nessun TTL). La chiave in L1 non scade mai finché non viene cancellata o lo store viene svuotato.
+`ChainStore.Get` legge l'`Entry` dal tier che ha risposto e ricostruisce le `Option` (`WithTTL` con il TTL residuo, `WithTags` con i tag originali) prima di scrivere sui tier precedenti.
 
-    Se serve propagare il TTL originale, usa `GetOrLoad` con un TTL esplicito — la chiave verrà scritta in entrambi gli store con il TTL corretto.
+Conseguenze:
+
+- La chiave in L1 scade insieme a quella in L2 — non rimane "viva per sempre" oltre il TTL originale.
+- `DeleteByTag` continua a funzionare anche sui tier ripopolati: i tag sono presenti su entrambi i livelli.
 
 ## `GetOrLoad` con chain
 
 ```go title="main.go"
 user, err := cache.GetOrLoad(ctx, "user:1", func(ctx context.Context) (User, error) {
     return db.FindUserByID(1) // (1)
-}, xcache.WithTTL(5*time.Minute))
+}, xcache.WithTTL(5*time.Minute), xcache.WithTags("users"))
 ```
 
-1. Chiamato solo se la chiave manca in tutti gli store della chain. Il risultato viene scritto in L1 e L2 con TTL di 5 minuti.
+1. Chiamato solo se la chiave manca in tutti gli store della chain. Il risultato viene scritto in L1 e L2 con TTL di 5 minuti e tag `users`.
+
+## Atomicità
+
+!!! warning "Non atomica tra tier"
+    `Set`, `Delete`, `DeleteMany`, `DeleteByTag` e `Clear` propagano in ordine e si fermano al primo errore. Se la propagazione fallisce su L2, L1 risulta già mutato. Per invalidazioni critiche, considerare retry o reconciliation lato applicativo.
 
 ## Tre o più livelli
 

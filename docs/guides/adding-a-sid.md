@@ -37,20 +37,34 @@ func (s *MemcachedStore) Get(ctx context.Context, key string) (xcache.Entry, err
     return xcache.Entry{Value: item.Value}, nil
 }
 
-// ... implementare Set, Delete, DeleteMany, GetMany, Clear, Close
+// ... implementare Set, Delete, DeleteMany, GetMany, Clear, DeleteByTag, Close
 ```
 
-## 2. Rispettare i contratti
+## 2. Operazioni opzionali e `ErrNotSupported`
+
+Se il backend non può implementare in modo efficiente un'operazione opzionale (es. `DeleteByTag` su un Memcached senza indice tag dedicato), restituire `xcache.ErrNotSupported`:
+
+```go title="store/memcached/store.go"
+func (s *MemcachedStore) DeleteByTag(ctx context.Context, tag string) error {
+    return xcache.ErrNotSupported
+}
+```
+
+I chiamanti possono distinguere il caso "feature non disponibile" da un errore di trasporto con `errors.Is(err, xcache.ErrNotSupported)`.
+
+## 3. Rispettare i contratti
 
 | Contratto | Note |
 |---|---|
 | `Get` restituisce `ErrNotFound` | Mai `Entry{}, nil` per chiavi mancanti |
-| `Get` popola `Entry.ExpiresAt` | Necessario per propagare il TTL nella chain cache |
+| `Get` popola `Entry.ExpiresAt` e `Entry.Tags` | Necessario per propagare TTL e tag nella chain cache |
 | `GetMany` omette le chiavi mancanti | La mappa risultante ha solo le chiavi trovate |
 | `Close` libera le risorse | Connessioni, goroutine background |
 | `Set` rispetta il TTL | Se `opts.TTL > 0`, la chiave deve scadere |
+| `Set` aggiorna l'indice tag su overwrite | Se il backend ha un indice tag, evitare riferimenti stale |
+| `DeleteByTag` non implementato | Restituire `ErrNotSupported`, non `nil` |
 
-## 3. Usare il nuovo store
+## 4. Usare il nuovo store
 
 ```go title="main.go"
 mc := memcache.New("localhost:11211")

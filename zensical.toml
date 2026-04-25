@@ -19,6 +19,7 @@ nav = [
   {"Guide" = [
     "guides/getting-started.md",
     "guides/chain-cache.md",
+    "guides/tag-invalidation.md",
     "guides/adding-a-sid.md"
   ]}
 ]

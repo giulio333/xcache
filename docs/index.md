@@ -9,6 +9,7 @@
 - **Type-safety assoluta** — inserisci una `User`, recuperi una `User`. Nessun type assertion esposto.
 - **Zero-config** — funziona in memoria locale con una riga. Scala su Redis quando necessario.
 - **Estendibilità trasparente** — metriche, chain cache, singleflight sono layer componibili, non hardcoded nel core.
+- **Invalidazione di gruppo** — `WithTags` e `DeleteByTag` permettono di invalidare insiemi correlati di chiavi in un'unica chiamata.
 
 ## Avvio rapido
 
@@ -17,8 +18,11 @@ store := memory.NewStore()
 cache := xcache.New[User](store)
 defer store.Close()
 
-// Scrittura
-cache.Set(ctx, "user:1", User{ID: 1, Name: "Alice"}, xcache.WithTTL(10*time.Minute))
+// Scrittura con TTL e tag
+cache.Set(ctx, "user:1", User{ID: 1, Name: "Alice"},
+    xcache.WithTTL(10*time.Minute),
+    xcache.WithTags("users"),
+)
 
 // Lettura
 user, err := cache.Get(ctx, "user:1")
@@ -28,6 +32,9 @@ if errors.Is(err, xcache.ErrNotFound) { ... }
 user, err = cache.GetOrLoad(ctx, "user:1", func(ctx context.Context) (User, error) {
     return db.FindUserByID(1)
 }, xcache.WithTTL(10*time.Minute))
+
+// Invalidazione di gruppo
+cache.DeleteByTag(ctx, "users")
 ```
 
 ## Setup avanzato: chain L1 → L2
@@ -45,7 +52,7 @@ cache := xcache.New[User](xcache.NewChain(l1, l2))
 
 ```
 xcache/
-├── cache.go          # Interfacce pubbliche: Store, Cache[T]
+├── cache.go          # Interfacce pubbliche: Store, Cache[T], Entry
 ├── cache_impl.go     # Implementazione concreta di Cache[T]
 ├── chain.go          # ChainStore: decorator L1→L2
 ├── options.go        # Option, WithTTL, WithTags
@@ -58,3 +65,4 @@ xcache/
 
 *[L1]: Layer 1 — cache veloce in memoria
 *[L2]: Layer 2 — cache distribuita (Redis)
+*[TTL]: Time To Live
