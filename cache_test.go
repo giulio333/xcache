@@ -281,11 +281,9 @@ func TestGetOrLoad_Singleflight(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 100 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _ = c.GetOrLoad(context.Background(), "u1", loader)
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -437,6 +435,130 @@ func TestEntry_RemainingTTL(t *testing.T) {
 	})
 }
 
+// — WithPrefix tests —
+
+func TestWithPrefix_GetSet(t *testing.T) {
+	store := memory.NewStore()
+	c := xcache.New[User](store, xcache.WithPrefix("users:"))
+	ctx := context.Background()
+
+	want := User{ID: 1, Name: "Alice"}
+	if err := c.Set(ctx, "1", want); err != nil {
+		t.Fatal(err)
+	}
+
+	// Value must be reachable through the prefixed cache.
+	got, err := c.Get(ctx, "1")
+	if err != nil || got != want {
+		t.Fatalf("Get returned (%v, %v), want (%v, nil)", got, err, want)
+	}
+
+	// The Store holds the prefixed key, not the bare key.
+	if _, err := store.Get(ctx, "1"); !errors.Is(err, xcache.ErrNotFound) {
+		t.Fatal("bare key must not exist in store")
+	}
+	if _, err := store.Get(ctx, "users:1"); err != nil {
+		t.Fatalf("prefixed key must exist in store, got %v", err)
+	}
+}
+
+func TestWithPrefix_Delete(t *testing.T) {
+	store := memory.NewStore()
+	c := xcache.New[User](store, xcache.WithPrefix("users:"))
+	ctx := context.Background()
+
+	_ = c.Set(ctx, "1", User{ID: 1})
+	_ = c.Delete(ctx, "1")
+
+	if _, err := c.Get(ctx, "1"); !errors.Is(err, xcache.ErrNotFound) {
+		t.Fatal("key should be deleted")
+	}
+}
+
+func TestWithPrefix_GetMany_KeysStripped(t *testing.T) {
+	store := memory.NewStore()
+	c := xcache.New[User](store, xcache.WithPrefix("users:"))
+	ctx := context.Background()
+
+	_ = c.Set(ctx, "1", User{ID: 1})
+	_ = c.Set(ctx, "2", User{ID: 2})
+
+	result, err := c.GetMany(ctx, []string{"1", "2", "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	// Keys in the returned map must be the original, unprefixed keys.
+	if _, ok := result["1"]; !ok {
+		t.Fatal("result must contain key \"1\", not \"users:1\"")
+	}
+	if _, ok := result["2"]; !ok {
+		t.Fatal("result must contain key \"2\", not \"users:2\"")
+	}
+}
+
+func TestWithPrefix_DeleteMany(t *testing.T) {
+	store := memory.NewStore()
+	c := xcache.New[User](store, xcache.WithPrefix("users:"))
+	ctx := context.Background()
+
+	_ = c.Set(ctx, "1", User{ID: 1})
+	_ = c.Set(ctx, "2", User{ID: 2})
+	_ = c.DeleteMany(ctx, []string{"1", "2"})
+
+	for _, k := range []string{"1", "2"} {
+		if _, err := c.Get(ctx, k); !errors.Is(err, xcache.ErrNotFound) {
+			t.Fatalf("key %q should be deleted", k)
+		}
+	}
+}
+
+func TestWithPrefix_GetOrLoad(t *testing.T) {
+	store := memory.NewStore()
+	c := xcache.New[User](store, xcache.WithPrefix("users:"))
+	ctx := context.Background()
+
+	calls := 0
+	got, err := c.GetOrLoad(ctx, "1", func(ctx context.Context) (User, error) {
+		calls++
+		return User{ID: 1, Name: "Alice"}, nil
+	})
+	if err != nil || got.ID != 1 {
+		t.Fatalf("unexpected result (%v, %v)", got, err)
+	}
+	if calls != 1 {
+		t.Fatalf("loader should be called once, got %d", calls)
+	}
+
+	// Second call must be a cache hit.
+	_, _ = c.GetOrLoad(ctx, "1", func(ctx context.Context) (User, error) {
+		calls++
+		return User{}, nil
+	})
+	if calls != 1 {
+		t.Fatal("loader must not be called on cache hit")
+	}
+
+	// Underlying store must hold the prefixed key.
+	if _, err := store.Get(ctx, "users:1"); err != nil {
+		t.Fatalf("prefixed key must be stored, got %v", err)
+	}
+}
+
+func TestWithPrefix_EmptyPrefix_NoChange(t *testing.T) {
+	store := memory.NewStore()
+	c := xcache.New[User](store, xcache.WithPrefix(""))
+	ctx := context.Background()
+
+	_ = c.Set(ctx, "k", User{ID: 99})
+
+	if _, err := store.Get(ctx, "k"); err != nil {
+		t.Fatalf("empty prefix: key must be stored as-is, got %v", err)
+	}
+}
+
 func BenchmarkSet(b *testing.B) {
 	c := NewCache()
 	ctx := context.Background()
@@ -484,11 +606,11 @@ func BenchmarkGetOrLoad_Hit(b *testing.B) {
 }
 
 func BenchmarkDeleteByTag(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		c := NewCache()
 		ctx := context.Background()
-		for j := 0; j < 1024; j++ {
+		for j := range 1024 {
 			_ = c.Set(ctx, strconv.Itoa(j), User{ID: j}, xcache.WithTags("group"))
 		}
 		b.StartTimer()

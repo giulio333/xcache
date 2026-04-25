@@ -51,3 +51,21 @@ func ApplyOptions(opts []Option) *Options {
 	}
 	return o
 }
+
+// CacheOption configures a Cache[T] at construction time (via New).
+// It is distinct from Option, which configures individual Set/GetOrLoad calls.
+type CacheOption func(prefix *string)
+
+// WithPrefix sets a string that is automatically prepended to every key
+// before it reaches the underlying Store. The prefix is transparent to the
+// caller: keys passed to Get, Set, Delete, GetOrLoad, GetMany, DeleteMany
+// are stored as "<prefix><key>" in the backend, but the Cache[T] API always
+// operates on the original (unprefixed) keys.
+//
+// An empty prefix is a no-op (the default).
+//
+//	cache := xcache.New[User](store, xcache.WithPrefix("users:"))
+//	_ = cache.Set(ctx, "1", u) // stored as "users:1"
+func WithPrefix(prefix string) CacheOption {
+	return func(p *string) { *p = prefix }
+}

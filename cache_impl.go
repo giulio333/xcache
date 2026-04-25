@@ -15,16 +15,54 @@ import (
 // The struct is unexported on purpose: callers obtain a Cache[T] through
 // New, never instantiate cache directly.
 type cache[T any] struct {
-	store Store
-	group singleflight.Group
+	store  Store
+	group  singleflight.Group
+	prefix string
 }
 
-// New returns a Cache[T] backed by the given Store. The same Store may back
-// caches of different T types as long as their key namespaces do not
-// collide; a type mismatch on Get is reported as an error rather than a
-// panic.
-func New[T any](store Store) Cache[T] {
-	return &cache[T]{store: store}
+// New returns a Cache[T] backed by the given Store. Optional CacheOptions
+// (e.g. WithPrefix) configure construction-time behaviour.
+//
+// The same Store may back caches of different T types as long as their key
+// namespaces do not collide; a type mismatch on Get is reported as an error
+// rather than a panic.
+func New[T any](store Store, opts ...CacheOption) Cache[T] {
+	c := &cache[T]{store: store}
+	for _, opt := range opts {
+		opt(&c.prefix)
+	}
+	return c
+}
+
+// prefixKey prepends c.prefix to key. When prefix is empty the original key
+// is returned unchanged (no allocation).
+func (c *cache[T]) prefixKey(key string) string {
+	if c.prefix == "" {
+		return key
+	}
+	return c.prefix + key
+}
+
+// prefixKeys returns a new slice with c.prefix prepended to every element.
+func (c *cache[T]) prefixKeys(keys []string) []string {
+	if c.prefix == "" {
+		return keys
+	}
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = c.prefix + k
+	}
+	return out
+}
+
+// stripPrefix removes c.prefix from key. If key does not start with the
+// prefix the key is returned unchanged (defensive; should not occur in
+// normal usage).
+func (c *cache[T]) stripPrefix(key string) string {
+	if c.prefix == "" || len(key) < len(c.prefix) {
+		return key
+	}
+	return key[len(c.prefix):]
 }
 
 // Get returns the value associated with key.
@@ -34,7 +72,7 @@ func New[T any](store Store) Cache[T] {
 // to T (which usually indicates that the same Store is being used by caches
 // of different T with overlapping keys).
 func (c *cache[T]) Get(ctx context.Context, key string) (T, error) {
-	entry, err := c.store.Get(ctx, key)
+	entry, err := c.store.Get(ctx, c.prefixKey(key))
 	if err != nil {
 		var zero T
 		return zero, err
@@ -49,13 +87,13 @@ func (c *cache[T]) Get(ctx context.Context, key string) (T, error) {
 
 // Set stores value under key with the given Options.
 func (c *cache[T]) Set(ctx context.Context, key string, value T, opts ...Option) error {
-	return c.store.Set(ctx, key, value, opts...)
+	return c.store.Set(ctx, c.prefixKey(key), value, opts...)
 }
 
 // Delete removes key from the underlying Store. It is a no-op if the key
 // does not exist.
 func (c *cache[T]) Delete(ctx context.Context, key string) error {
-	return c.store.Delete(ctx, key)
+	return c.store.Delete(ctx, c.prefixKey(key))
 }
 
 // Clear removes every key from the underlying Store.
@@ -67,7 +105,7 @@ func (c *cache[T]) Clear(ctx context.Context) error {
 // keys are silently omitted. A type mismatch on any returned entry causes
 // the whole call to fail with a typed error.
 func (c *cache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, error) {
-	raw, err := c.store.GetMany(ctx, keys)
+	raw, err := c.store.GetMany(ctx, c.prefixKeys(keys))
 	if err != nil {
 		return nil, err
 	}
@@ -77,14 +115,15 @@ func (c *cache[T]) GetMany(ctx context.Context, keys []string) (map[string]T, er
 		if !ok {
 			return nil, fmt.Errorf("xcache: type mismatch for key %q", k)
 		}
-		result[k] = val
+		// Strip the prefix so callers receive the original key they passed in.
+		result[c.stripPrefix(k)] = val
 	}
 	return result, nil
 }
 
 // DeleteMany removes a batch of keys in a single call.
 func (c *cache[T]) DeleteMany(ctx context.Context, keys []string) error {
-	return c.store.DeleteMany(ctx, keys)
+	return c.store.DeleteMany(ctx, c.prefixKeys(keys))
 }
 
 // DeleteByTag removes every entry that was stored with the given tag. It
@@ -115,7 +154,11 @@ func (c *cache[T]) GetOrLoad(ctx context.Context, key string, loader func(contex
 		return val, nil
 	}
 
-	v, err, _ := c.group.Do(key, func() (any, error) {
+	// Use the prefixed key as the singleflight deduplication token so that
+	// concurrent callers sharing a store but different prefix settings are
+	// correctly deduped per actual stored key.
+	pfxKey := c.prefixKey(key)
+	v, err, _ := c.group.Do(pfxKey, func() (any, error) {
 		return loader(ctx)
 	})
 	if err != nil {
@@ -128,6 +171,6 @@ func (c *cache[T]) GetOrLoad(ctx context.Context, key string, loader func(contex
 		var zero T
 		return zero, fmt.Errorf("xcache: loader returned unexpected type for key %q", key)
 	}
-	_ = c.store.Set(ctx, key, result, opts...)
+	_ = c.store.Set(ctx, pfxKey, result, opts...)
 	return result, nil
 }

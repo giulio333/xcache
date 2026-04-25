@@ -132,15 +132,15 @@ if err := cache.DeleteByTag(ctx, "users"); errors.Is(err, xcache.ErrNotSupported
 ## `New[T]`
 
 ```go
-func New[T any](store Store) Cache[T]
+func New[T any](store Store, opts ...CacheOption) Cache[T]
 ```
 
-Crea un'istanza di `Cache[T]` che usa `store` come backend. Lo stesso store può essere condiviso tra cache di tipi diversi:
+Crea un'istanza di `Cache[T]` che usa `store` come backend. Lo stesso store può essere condiviso tra cache di tipi diversi. Le `CacheOption` (come `WithPrefix`) configurano la cache a tempo di costruzione:
 
 ```go
 store := memory.NewStore()
-users    := xcache.New[User](store)
-products := xcache.New[Product](store)
+users    := xcache.New[User](store, xcache.WithPrefix("u:"))
+products := xcache.New[Product](store, xcache.WithPrefix("p:"))
 ```
 
 ---

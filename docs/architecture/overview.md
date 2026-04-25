@@ -8,6 +8,7 @@ graph TD
     CacheT["Cache[T]\nAPI generica type-safe"]
     Impl["cache[T]\nimplementazione concreta"]
     Singleflight["singleflight.Group\nGetOrLoad"]
+    Middleware["Middleware\nlogging · readonly · timeout · metrics"]
     Chain["ChainStore\nL1 → L2 fallback"]
     Store["Store\ninterfaccia backend"]
     Memory["MemoryStore\nshards + tag index"]
@@ -15,8 +16,9 @@ graph TD
 
     User --> CacheT
     CacheT --> Impl
-    Impl --> Store
     Impl --> Singleflight
+    Impl --> Middleware
+    Middleware --> Store
     Store --> Chain
     Chain --> Memory
     Chain --> Redis
@@ -32,6 +34,9 @@ graph TD
 
 `cache[T]`
 :   Implementazione concreta di `Cache[T]`. Fa da traduttore tra il mondo generico (`T`) e il mondo `any` dello `Store`. Contiene il `singleflight.Group` per `GetOrLoad`.
+
+`Middleware`
+:   Decorator su `Store` composti per annidamento. Ogni middleware è una funzione `func(Store) Store` — nessun tipo aggiuntivo nel core. Disponibili: `logging`, `readonly`, `timeout`, `metrics`.
 
 `ChainStore`
 :   Decorator che mette in cascata più `Store`. Implementa il pattern L1→L2: se L1 manca la chiave, la cerca in L2 e la ripopola in L1 propagando TTL e tag originali.

@@ -20,6 +20,11 @@ nav = [
     "guides/getting-started.md",
     "guides/chain-cache.md",
     "guides/tag-invalidation.md",
+    "guides/key-prefix.md",
+    "guides/logging-middleware.md",
+    "guides/readonly-middleware.md",
+    "guides/metrics-middleware.md",
+    "guides/timeout-middleware.md",
     "guides/adding-a-sid.md"
   ]}
 ]

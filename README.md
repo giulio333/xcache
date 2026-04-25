@@ -33,7 +33,7 @@ _ = userCache.DeleteByTag(ctx, "users")
 - **Singleflight** — prevents cache stampede on `GetOrLoad`
 - **Tag-based invalidation** — group keys with `WithTags`, drop them
   together with `DeleteByTag`
-- **Observability** — Prometheus decorator (planned)
+- **Middleware** — logging, read-only, per-operation timeout, backend-agnostic metrics
 
 ## API at a glance
 
@@ -60,6 +60,75 @@ Options for `Set` and `GetOrLoad`:
 
 - `WithTTL(d time.Duration)` — entry deadline (`0` = no expiration)
 - `WithTags(tags ...string)` — labels for group invalidation
+
+Construction-time options for `New`:
+
+- `WithPrefix(prefix string)` — prepend a fixed string to every key before it
+  reaches the Store. Callers always use short keys; the translation is
+  transparent. An empty prefix is a no-op.
+
+  ```go
+  userCache := xcache.New[User](store, xcache.WithPrefix("users:"))
+  _ = userCache.Set(ctx, "1", u)         // stored as "users:1"
+  u, _ := userCache.Get(ctx, "1")        // reads "users:1", returns User
+  result, _ := userCache.GetMany(ctx, []string{"1", "2"})
+  // result keys are "1" and "2" (prefix stripped in output)
+  ```
+
+## Middleware
+
+Middlewares wrap any `Store` and are composed by nesting:
+
+```go
+store := logging.Wrap(
+    timeout.Wrap(
+        metrics.Wrap(memory.NewStore(), rec),
+        5*time.Second,
+    ),
+    logger,
+)
+cache := xcache.New[User](store)
+```
+
+### Logging
+
+Structured `log/slog` entries for every operation. `ErrNotFound` and `ErrNotSupported` are logged at `DEBUG`; real errors at `ERROR`. Pass `nil` to fall back to `slog.Default()`.
+
+```go
+store := logging.Wrap(memory.NewStore(), logger)
+```
+
+### Read-only
+
+Blocks all write operations (`Set`, `Delete`, `DeleteMany`, `DeleteByTag`, `Clear`) and returns the exported `ErrReadOnly` sentinel. Useful for staging environments or shared read-only caches.
+
+```go
+store := readonly.Wrap(memory.NewStore())
+// store.Set(...) → readonly.ErrReadOnly
+```
+
+### Timeout
+
+Wraps every operation with `context.WithTimeout`, protecting against slow backends. `d <= 0` is a no-op.
+
+```go
+store := timeout.Wrap(memory.NewStore(), 200*time.Millisecond)
+```
+
+### Metrics
+
+Exposes a `Recorder` interface so you can plug in any metrics backend (Prometheus, StatsD, DataDog) without the middleware carrying external dependencies.
+
+```go
+type Recorder interface {
+    RecordHit(op string)
+    RecordMiss(op string)
+    RecordError(op string)
+    RecordDuration(op string, d time.Duration)
+}
+
+store := metrics.Wrap(memory.NewStore(), myRecorder)
+```
 
 ## Testing
 
