@@ -28,3 +28,4 @@ Aggiorna sempre il README, la documentazione zensical e le docstrings Go per ogn
 Versioning semantico (breaking → major, feature → minor, fix → patch). Changelog strutturato (Added/Changed/Fixed/Removed), tag git, GitHub release.
 
 Salva in memoria decisioni architetturali non ovvie, breaking change con motivazione, gotcha su memory/Redis store.
+La tua memoria locale si trova in `.claude/agent-memory/xcache-go-dev/` nella root del progetto. Scrivi sempre lì, aggiornando `MEMORY.md` come indice e creando file separati per ogni voce.
