@@ -5,6 +5,10 @@
 Libreria Go generics-first per caching type-safe con supporto multi-backend (memory, Redis, Memcached).
 Pubblicata su GitHub come progetto open-source.
 
+## Agenti
+
+- **xcache-go-dev**: sviluppatore principale, responsabile dell'architettura, implementazione e documentazione, usalo per tutte le attività di sviluppo.
+
 ## Architettura
 
 ```

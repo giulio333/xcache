@@ -61,6 +61,33 @@ Options for `Set` and `GetOrLoad`:
 - `WithTTL(d time.Duration)` — entry deadline (`0` = no expiration)
 - `WithTags(tags ...string)` — labels for group invalidation
 
+## Middleware
+
+### Logging
+
+Wrap any `Store` with `logging.Wrap` to get structured `log/slog` entries for
+every cache operation. Successful operations are logged at `DEBUG` level;
+errors at `ERROR` level. `ErrNotFound` (cache miss) and `ErrNotSupported` are
+treated as non-errors and logged at `DEBUG` so they do not pollute production
+logs.
+
+```go
+import (
+    "log/slog"
+    "github.com/giulio333/xcache/middleware/logging"
+    "github.com/giulio333/xcache/store/memory"
+)
+
+logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+store  := logging.Wrap(memory.NewStore(), logger)
+defer store.Close()
+
+cache := xcache.New[User](store)
+// Every Get/Set/Delete/... now emits a structured log line.
+```
+
+Pass `nil` as the logger to fall back to `slog.Default()`.
+
 ## Testing
 
 ```bash

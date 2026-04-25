@@ -20,6 +20,7 @@ nav = [
     "guides/getting-started.md",
     "guides/chain-cache.md",
     "guides/tag-invalidation.md",
+    "guides/logging-middleware.md",
     "guides/adding-a-sid.md"
   ]}
 ]
